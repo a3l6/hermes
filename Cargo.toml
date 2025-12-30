@@ -16,3 +16,6 @@ anyhow = "1.0"
 
 # Async (useful later for backend calls)
 tokio = { version = "1.37", features = ["full"] }
+imap = "2.4"
+native-tls = "0.2"
+serde = "1.0.228"

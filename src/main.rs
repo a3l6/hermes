@@ -1,6 +1,7 @@
 mod app;
 mod backend;
 mod cli;
+mod email_tools;
 mod tui;
 
 use backend::{EmailBackend, FileBackend};
@@ -9,6 +10,8 @@ use cli::{Cli, Commands};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    let emails = email_tools::get_inbox_all();
 
     let backend = FileBackend::new("sample", "me@hermes.local");
 
