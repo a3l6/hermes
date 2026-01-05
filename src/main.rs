@@ -1,15 +1,61 @@
 mod email_tools;
 
-fn main() {
-    let e = email_tools::get_inbox_one(17373);
+use clap::Parser;
+use email_tools::cli::{Cli, Commands, InboxCommands};
+use email_tools::{
+    Email, EmailProvider, UserCredentials, get_inbox_all, get_inbox_one, send_email,
+};
 
-    match e {
-        Ok(email) => {
-            println!("{:#?}", email);
-        }
-        Err(error) => {
-            println!("Could not retrieve message!");
-            eprintln!("{}", error);
+fn main() {
+    let cli = Cli::parse();
+
+    // TEMP: credentials (you should load these from env vars later)
+    let credentials = UserCredentials {
+        username: std::env::var("EMAIL_USERNAME").expect("EMAIL_USERNAME not set"),
+        password: std::env::var("EMAIL_PASSWORD").expect("EMAIL_PASSWORD not set"),
+    };
+
+    let provider = EmailProvider::Google;
+
+    match cli.command {
+        Commands::Inbox { command } => match command {
+            InboxCommands::One { id } => match get_inbox_one(provider, credentials, id) {
+                Ok(email) => println!("{:#?}", email),
+                Err(e) => {
+                    eprintln!("Could not retrieve message");
+                    eprintln!("{}", e);
+                }
+            },
+
+            InboxCommands::All => match get_inbox_all(provider, credentials) {
+                Ok(inbox) => println!("{:#?}", inbox),
+                Err(e) => {
+                    eprintln!("Could not retrieve inbox");
+                    eprintln!("{}", e);
+                }
+            },
+        },
+
+        Commands::Send {
+            from,
+            to,
+            subject,
+            body,
+            ..
+        } => {
+            let mailbox = to.into_iter().next().expect("No recipient provided");
+
+            let email = Email {
+                host_email: from,
+                mailbox,
+                subject,
+                body,
+                ..Default::default()
+            };
+            if let Err(e) = send_email(email, credentials) {
+                eprintln!("Failed to send email");
+                eprintln!("{}", e);
+            }
         }
     }
 }

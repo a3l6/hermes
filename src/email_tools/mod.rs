@@ -4,6 +4,8 @@ use lettre::{Message, SmtpTransport, Transport};
 use native_tls::TlsConnector;
 use std::net::TcpStream;
 
+pub mod cli;
+
 pub enum EmailProvider {
     Google,
     Outlook,
@@ -11,8 +13,8 @@ pub enum EmailProvider {
 }
 
 pub struct UserCredentials {
-    username: String,
-    password: String,
+    pub username: String,
+    pub password: String,
 }
 
 // FUTURE::
@@ -23,13 +25,13 @@ pub struct UserCredentials {
 
 #[derive(Debug)]
 pub struct Email {
-    id: u32,
-    host_email: String,
-    subject: String,
-    name: String,
-    mailbox: String,
-    host: String,
-    body: String,
+    pub id: u32,
+    pub host_email: String,
+    pub subject: String,
+    pub name: String,
+    pub mailbox: String,
+    pub host: String,
+    pub body: String,
 }
 
 impl Default for Email {
@@ -46,6 +48,7 @@ impl Default for Email {
     }
 }
 
+#[derive(Debug)]
 pub struct Inbox {
     inbox: Vec<Email>,
 }
