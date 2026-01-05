@@ -1,0 +1,32 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Why I built an ugly site in 2025:
+
+I needed a personal site but I didn't want to fool around with over complicated and clunky JavaScript frameworks just for a single page app. Since I mainly work on backend services I decided to take a page out of the GOATS' book.
+
+If you look at top tier programmers like Rob Pike, Richard Stallman, Paul Graham, and Linus Torvalds, there sites are all boring and ugly, yet these are some of the best programmers ever. So I'm taking inspiration from them.
+
+That's why I've finally launched my boring and ugly personal website. Built from scratch and hosted on my own hardware. No Vercel. No JavaScript.
+
+Checkout the website:
+https://emilio-mendoza.com
+
+Check out the signed PGP message:
+https://raw.githubusercontent.com/a3l6/linkedin-posts/refs/heads/main/personalsite.txt.asc
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEXPcDzqiQhKcoPDo+2BBYJgz0Sk4FAmlUbVwACgkQ2BBYJgz0
+Sk64XQ//aPRE4hMGIOPcAD+aOk8wVYi05ATQKIPjB+ywnc8QCfXQTHJy2OfaWpZS
+S+dKn+sPEnhwtyUauo248jpjE789njJGXHrMkxAveS7itOUrPSuOZz6BpUGXKfnl
+aYanpswRmKnY/n6aryMcZsnUxU5H3J94WD/O7lER+lBpyR/iKmPux/uoiVzZjsy0
+hxv4Ncu90bZBcVuBgv4c+5eMeQ8topXzW53UEopNn+iHayS+/t0AuGHlQHHybSoR
+d+u9Ew2UU+2aVZTjDgyXsiDXpfANjrLbo44vIT77W6vq5f2bpvzyiAb17DC3VDRk
+1XyLbvFe/VvIG5PEbkNypcS5vc7rmLg2/DLjgd1VhWo0/o6GHOpPkxIv3pcWufau
+dhogWGfyalfL2dDwzivLhjHoW2lBXrgsfOuo+x8a97SAODZSBjTUtCzm+57LUjEG
+dOCOBddj5ioHjE9JOsZKOwpgfR2LgyZeaIILhqyjcswHacXDiNnjrUsVbGOdQEcx
+7lqV5iXxESST4m2V1tnSQfJJgEd6ojyUdyUsio8mUZe8UJUx2SBHIkj6HRPvw061
+08j/3gfcnueld9ss3Zgigca44ak8Ftror3Wxw+PQjqz8RUGXNldTiI7ouzUAQjPZ
+ai+fJ0Wr5Ej1MuSvUF0NOWzjnYtvfoVNwwMEXq1hGC3EKL5OQCw=
+=OktH
+-----END PGP SIGNATURE-----

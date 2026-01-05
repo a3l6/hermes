@@ -1,0 +1,5 @@
+FROM: sender@example.com
+SUBJECT: Email Subject
+BODY:
+Email body content here.
+Multiple lines supported.
