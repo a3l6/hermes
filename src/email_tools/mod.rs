@@ -1,7 +1,10 @@
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
+use mailparse::{MailHeaderMap, parse_mail};
 use native_tls::TlsConnector;
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
 
 pub mod cli;
@@ -55,7 +58,7 @@ pub struct Inbox {
 
 // Returns a full IMAP_DATA with contents
 pub fn get_inbox_one(
-    provider: EmailProvider,
+    provider: EmailProvider, // not implemented yet
     credentials: UserCredentials,
     id: u32,
 ) -> Result<Email, Box<dyn std::error::Error>> {
@@ -232,5 +235,41 @@ pub fn send_email(
         Err(e) => eprintln!("Could not send email: {}", e),
     }
 
+    Ok(())
+}
+
+pub struct EmailStorage {
+    path: String,
+}
+
+impl EmailStorage {
+    pub fn read_email_buffered(file: File) -> Result<Email, Box<dyn std::error::Error>> {
+        let mut reader = BufReader::new(file);
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer)?;
+
+        let parsed = parse_mail(&buffer)?;
+
+        println!("Subject: {:?}", parsed.headers.get_first_value("Subject"));
+        println!("Body: {}", parsed.get_body()?);
+
+        Ok(())
+    }
+}
+
+fn write_email_to_file(path: &str) -> std::io::Result<()> {
+    let email_content = concat!(
+        "From: sender@example.com\r\n",
+        "To: recipient@example.com\r\n",
+        "Subject: Test Email\r\n",
+        "Date: Mon, 15 Jan 2024 10:30:00 +0000\r\n",
+        "MIME-Version: 1.0\r\n",
+        "Content-Type: text/plain; charset=UTF-8\r\n",
+        "\r\n",
+        "This is the email body.\r\n"
+    );
+
+    let mut file = File::create(path)?;
+    file.write_all(email_content.as_bytes())?;
     Ok(())
 }
