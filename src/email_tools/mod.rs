@@ -168,7 +168,6 @@ pub struct Email {
 }
 
 pub fn send_email(email: Email) -> Result<(), Box<dyn std::error::Error>> {
-    // Create the email
     let email = Message::builder()
         .from(email.from.parse()?)
         .to(email.to.parse()?)
@@ -176,18 +175,15 @@ pub fn send_email(email: Email) -> Result<(), Box<dyn std::error::Error>> {
         .header(ContentType::TEXT_PLAIN)
         .body(String::from(email.body))?;
 
-    // Set up Gmail SMTP credentials
     let creds = Credentials::new(
         "emen3998@gmail.com".to_owned(),
         "peic fygg uoxq tjep".to_owned(),
     );
 
-    // Create SMTP transport
     let mailer = SmtpTransport::relay("smtp.gmail.com")?
         .credentials(creds)
         .build();
 
-    // Send the email
     match mailer.send(&email) {
         Ok(_) => println!("Email sent successfully!"),
         Err(e) => eprintln!("Could not send email: {}", e),
