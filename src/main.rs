@@ -11,7 +11,21 @@ use cli::{Cli, Commands};
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let emails = email_tools::get_inbox_all();
+    // let emails = email_tools::get_inbox_all();
+
+    let e = email_tools::get_inbox_one(17373);
+
+    match e {
+        Ok(email) => {
+            println!("{:#?}", email);
+        }
+        Err(error) => {
+            println!("Could not retrieve message!");
+            eprintln!("{}", error);
+        }
+    }
+
+    //let _ = email_tools::send_email(Email {});
 
     let backend = FileBackend::new("sample", "me@hermes.local");
 

@@ -1,3 +1,6 @@
+use lettre::message::header::ContentType;
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{Message, SmtpTransport, Transport};
 use native_tls::TlsConnector;
 use std::net::TcpStream;
 
@@ -28,11 +31,11 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
         .login("emen3998@gmail.com", "peic fygg uoxq tjep")
         .map_err(|e| e.0)?;
 
-    let mailbox = imap_session.select("INBOX")?;
-
     let fetch_range = id.to_string();
 
-    let messages = imap_session.fetch(fetch_range, "ENVELOPE")?;
+    imap_session.select("INBOX")?;
+
+    let messages = imap_session.fetch(fetch_range, "(ENVELOPE BODY[TEXT])")?;
 
     let mut ret: Option<IMAP_Data> = None; // No email yet
 
@@ -65,7 +68,11 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
                         .as_ref()
                         .map(|h| String::from_utf8_lossy(h).to_string())
                         .unwrap_or_default(),
-                    content: "".to_string(),
+                    content: message
+                        .body()
+                        .as_ref()
+                        .map(|b| String::from_utf8_lossy(b).to_string())
+                        .unwrap_or_default(),
                 })
             }
         }
@@ -74,9 +81,6 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
     if ret.is_none() {
         return Err("Could not find requested email".into());
     }
-
-    // Logout
-    imap_session.logout()?;
 
     println!("\nDisconnected successfully");
     Ok(ret.unwrap_or_default())
@@ -153,4 +157,40 @@ pub fn get_inbox_all() -> Result<Inbox, Box<dyn std::error::Error>> {
 
     println!("\nDisconnected successfully");
     Ok(inbox)
+}
+
+pub struct Email {
+    from: String,
+    to: String,
+    subject: String,
+    body: String,
+}
+
+pub fn send_email(email: Email) -> Result<(), Box<dyn std::error::Error>> {
+    // Create the email
+    let email = Message::builder()
+        .from(email.from.parse()?)
+        .to(email.to.parse()?)
+        .subject(email.subject)
+        .header(ContentType::TEXT_PLAIN)
+        .body(String::from(email.body))?;
+
+    // Set up Gmail SMTP credentials
+    let creds = Credentials::new(
+        "emen3998@gmail.com".to_owned(),
+        "peic fygg uoxq tjep".to_owned(),
+    );
+
+    // Create SMTP transport
+    let mailer = SmtpTransport::relay("smtp.gmail.com")?
+        .credentials(creds)
+        .build();
+
+    // Send the email
+    match mailer.send(&email) {
+        Ok(_) => println!("Email sent successfully!"),
+        Err(e) => eprintln!("Could not send email: {}", e),
+    }
+
+    Ok(())
 }
