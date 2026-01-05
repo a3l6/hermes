@@ -4,22 +4,58 @@ use lettre::{Message, SmtpTransport, Transport};
 use native_tls::TlsConnector;
 use std::net::TcpStream;
 
-#[derive(Debug, Default)]
-pub struct IMAP_Data {
+pub enum EmailProvider {
+    Google,
+    Outlook,
+    Custom(String),
+}
+
+pub struct UserCredentials {
+    username: String,
+    password: String,
+}
+
+// FUTURE::
+//  let config = Config {
+//  port: 3000,
+//  ..Default::default()
+//  };
+
+#[derive(Debug)]
+pub struct Email {
     id: u32,
+    host_email: String,
     subject: String,
     name: String,
     mailbox: String,
     host: String,
-    content: String,
+    body: String,
+}
+
+impl Default for Email {
+    fn default() -> Self {
+        Email {
+            id: 0,
+            host_email: "".to_string(),
+            subject: "".to_string(),
+            name: "".to_string(),
+            mailbox: "".to_string(),
+            host: "".to_string(),
+            body: "".to_string(),
+        }
+    }
 }
 
 pub struct Inbox {
-    inbox: Vec<IMAP_Data>,
+    inbox: Vec<Email>,
 }
 
 // Returns a full IMAP_DATA with contents
-pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
+pub fn get_inbox_one(
+    provider: EmailProvider,
+    credentials: UserCredentials,
+    id: u32,
+) -> Result<Email, Box<dyn std::error::Error>> {
     let domain = "imap.gmail.com";
     let tcp_stream = TcpStream::connect((domain, 993))?;
 
@@ -29,7 +65,7 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
     let client = imap::Client::new(tls_stream);
 
     let mut imap_session = client
-        .login("emen3998@gmail.com", "peic fygg uoxq tjep")
+        .login(credentials.username, credentials.password)
         .map_err(|e| e.0)?;
 
     let fetch_range = id.to_string();
@@ -38,7 +74,7 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
 
     let messages = imap_session.fetch(fetch_range, "(BODY[] ENVELOPE)")?;
 
-    let mut ret: Option<IMAP_Data> = None; // No email yet
+    let mut ret: Option<Email> = None; // No email yet
 
     for message in messages.iter() {
         let envelope = message
@@ -47,7 +83,7 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
 
         if let Some(from) = envelope.from.as_ref() {
             for address in from {
-                ret = Some(IMAP_Data {
+                ret = Some(Email {
                     id: message.message,
                     subject: envelope
                         .subject
@@ -69,11 +105,12 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
                         .as_ref()
                         .map(|h| String::from_utf8_lossy(h).to_string())
                         .unwrap_or_default(),
-                    content: message
+                    body: message
                         .body()
                         .as_ref()
                         .map(|b| String::from_utf8_lossy(b).to_string())
                         .unwrap_or_default(),
+                    ..Default::default()
                 })
             }
         }
@@ -87,7 +124,10 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
     Ok(ret.unwrap_or_default())
 }
 
-pub fn get_inbox_all() -> Result<Inbox, Box<dyn std::error::Error>> {
+pub fn get_inbox_all(
+    provider: EmailProvider,
+    credentials: UserCredentials,
+) -> Result<Inbox, Box<dyn std::error::Error>> {
     let mut inbox = Inbox { inbox: Vec::new() };
 
     let domain = "imap.gmail.com";
@@ -99,7 +139,7 @@ pub fn get_inbox_all() -> Result<Inbox, Box<dyn std::error::Error>> {
     let client = imap::Client::new(tls_stream);
 
     let mut imap_session = client
-        .login("emen3998@gmail.com", "peic fygg uoxq tjep")
+        .login(credentials.username, credentials.password)
         .map_err(|e| e.0)?;
 
     let mailbox = imap_session.select("INBOX")?;
@@ -125,7 +165,7 @@ pub fn get_inbox_all() -> Result<Inbox, Box<dyn std::error::Error>> {
 
         if let Some(from) = envelope.from.as_ref() {
             for address in from {
-                inbox.inbox.push(IMAP_Data {
+                inbox.inbox.push(Email {
                     id: message.message,
                     subject: envelope
                         .subject
@@ -147,37 +187,37 @@ pub fn get_inbox_all() -> Result<Inbox, Box<dyn std::error::Error>> {
                         .as_ref()
                         .map(|h| String::from_utf8_lossy(h).to_string())
                         .unwrap_or_default(),
-                    content: "".to_string(),
+                    body: "".to_string(),
+                    ..Default::default()
                 })
             }
         }
     }
 
-    // Logout
     imap_session.logout()?;
 
     println!("\nDisconnected successfully");
     Ok(inbox)
 }
 
-pub struct Email {
-    from: String,
-    to: String,
-    subject: String,
-    body: String,
+fn build_email(mailbox: String, host: String) -> String {
+    return format!("{mailbox}@{host}");
 }
 
-pub fn send_email(email: Email) -> Result<(), Box<dyn std::error::Error>> {
+pub fn send_email(
+    email: Email,
+    credentials: UserCredentials,
+) -> Result<(), Box<dyn std::error::Error>> {
     let email = Message::builder()
-        .from(email.from.parse()?)
-        .to(email.to.parse()?)
+        .from(email.host_email.parse()?)
+        .to(build_email(email.mailbox, email.host).parse()?)
         .subject(email.subject)
         .header(ContentType::TEXT_PLAIN)
         .body(String::from(email.body))?;
 
     let creds = Credentials::new(
-        "emen3998@gmail.com".to_owned(),
-        "peic fygg uoxq tjep".to_owned(),
+        credentials.username.to_owned(),
+        credentials.password.to_owned(),
     );
 
     let mailer = SmtpTransport::relay("smtp.gmail.com")?
