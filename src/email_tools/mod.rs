@@ -3,6 +3,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use mailparse::{MailHeaderMap, parse_mail};
 use native_tls::TlsConnector;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
@@ -26,7 +27,7 @@ pub struct UserCredentials {
 //  ..Default::default()
 //  };
 
-#[derive(Debug)]
+/*#[derive(Debug)]
 pub struct Email {
     pub id: u32,
     pub host_email: String,
@@ -35,17 +36,34 @@ pub struct Email {
     pub mailbox: String,
     pub host: String,
     pub body: String,
+}*/
+
+
+#[derive(Debug, Clone)]
+pub struct Email {
+    pub from: Option<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub bcc: Vec<String>,
+    pub subject: Option<String>,
+    pub date: Option<String>,
+    pub message_id: Option<String>,
+    pub other_headers: HashMap<String, String>,
+    pub body: EmailBody,
 }
+
 
 impl Default for Email {
     fn default() -> Self {
         Email {
-            id: 0,
-            host_email: "".to_string(),
+            from: "".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            bcc: "".to_string(),
             subject: "".to_string(),
-            name: "".to_string(),
-            mailbox: "".to_string(),
-            host: "".to_string(),
+            date: "".to_string(),
+            message_id: 0,
+            other_headers: HashMap::new(),
             body: "".to_string(),
         }
     }
@@ -87,30 +105,35 @@ pub fn get_inbox_one(
             .envelope()
             .expect("message did not have an envelope");
 
+
         if let Some(from) = envelope.from.as_ref() {
             for address in from {
                 ret = Some(Email {
-                    id: message.message,
+                    from: build_email(
+                        address
+                            .mailbox
+                            .as_ref()
+                            .map(|m| String::from_utf8_lossy(m).to_string())
+                            .unwrap_or_default(),
+                        address
+                            .host
+                            .as_ref()
+                            .map(|h| String::from_utf8_lossy(h).to_string())
+                            .unwrap_or_default(),
+                    ),
+                    to: credentials.username.clone(),
+                    cc: unpack_cc(envelope.cc),
                     subject: envelope
                         .subject
                         .as_ref()
                         .map(|s| String::from_utf8_lossy(s).to_string())
                         .unwrap_or_else(|| "(no subj:wect)".to_string()),
-                    name: address
-                        .name
+                    date: envelope
+                        .date
                         .as_ref()
-                        .map(|n| String::from_utf8_lossy(n).to_string())
+                        .map(|d| String::from_utf8_lossy(d).to_string())
                         .unwrap_or_default(),
-                    mailbox: address
-                        .mailbox
-                        .as_ref()
-                        .map(|m| String::from_utf8_lossy(m).to_string())
-                        .unwrap_or_default(),
-                    host: address
-                        .host
-                        .as_ref()
-                        .map(|h| String::from_utf8_lossy(h).to_string())
-                        .unwrap_or_default(),
+                    message_id: message.message,
                     body: message
                         .body()
                         .as_ref()
@@ -169,35 +192,39 @@ pub fn get_inbox_all(
             .envelope()
             .expect("message did not have an envelope");
 
-        if let Some(from) = envelope.from.as_ref() {
+            if let Some(from) = envelope.from.as_ref() {
             for address in from {
                 inbox.inbox.push(Email {
-                    id: message.message,
+                    from: build_email(
+                        address
+                            .mailbox
+                            .as_ref()
+                            .map(|m| String::from_utf8_lossy(m).to_string())
+                            .unwrap_or_default(),
+                        address
+                            .host
+                            .as_ref()
+                            .map(|h| String::from_utf8_lossy(h).to_string())
+                            .unwrap_or_default(),
+                    ),
+                    to: credentials.username.clone(),
+                    cc: unpack_cc(envelope.cc),
                     subject: envelope
                         .subject
                         .as_ref()
                         .map(|s| String::from_utf8_lossy(s).to_string())
                         .unwrap_or_else(|| "(no subj:wect)".to_string()),
-                    name: address
-                        .name
+                    date: envelope
+                        .date
                         .as_ref()
-                        .map(|n| String::from_utf8_lossy(n).to_string())
+                        .map(|d| String::from_utf8_lossy(d).to_string())
                         .unwrap_or_default(),
-                    mailbox: address
-                        .mailbox
-                        .as_ref()
-                        .map(|m| String::from_utf8_lossy(m).to_string())
-                        .unwrap_or_default(),
-                    host: address
-                        .host
-                        .as_ref()
-                        .map(|h| String::from_utf8_lossy(h).to_string())
-                        .unwrap_or_default(),
-                    body: "".to_string(),
+                    message_id: message.message,
                     ..Default::default()
                 })
             }
         }
+
     }
 
     imap_session.logout()?;
@@ -210,18 +237,44 @@ fn build_email(mailbox: String, host: String) -> String {
     return format!("{mailbox}@{host}");
 }
 
+
+fn build_email_addr(addr: &imap_proto::types::Address) -> String {
+    let mailbox = addr.mailbox.as_ref()
+        .map(|m| String::from_utf8_lossy(m).to_string())
+        .unwrap_or_default();
+
+    let host = addr.host.as_ref()
+        .map(|h| String::from_utf8_lossy(h).to_string())
+        .unwrap_or_default();
+
+    return format!("{}@{}", mailbox, host)
+}
+
+
+fn unpack_cc(header: Option<String>) -> Vec<String> {
+    let mut cc: Vec<String> = Vec<String>::new();
+
+    if let Some(addrs) = header.as_ref() {
+        for addr in addrs {
+            cc.push(build_email_addr(&addr));
+        }
+    }
+
+    return cc
+}
+
 pub fn send_email(
     email: Email,
     credentials: UserCredentials,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let email = Message::builder()
-        .from(email.host_email.parse()?)
-        .to(build_email(email.mailbox, email.host).parse()?)
+        .from(email.from?)
+        .to(email.to.parse()?)
         .subject(email.subject)
         .header(ContentType::TEXT_PLAIN)
         .body(String::from(email.body))?;
 
-    let creds = Credentials::new(
+    let creds: Credentials = Credentials::new(
         credentials.username.to_owned(),
         credentials.password.to_owned(),
     );
@@ -243,7 +296,7 @@ pub struct EmailStorage {
 }
 
 impl EmailStorage {
-    pub fn read_email_buffered(file: File) -> Result<Email, Box<dyn std::error::Error>> {
+    pub fn read_email(file: File) -> Result<Email, Box<dyn std::error::Error>> {
         let mut reader = BufReader::new(file);
         let mut buffer = Vec::new();
         reader.read_to_end(&mut buffer)?;
@@ -255,21 +308,23 @@ impl EmailStorage {
 
         Ok(())
     }
+    fn write_email_to_file(path: &str) -> std::io::Result<()> {
+        let email_content = concat!(
+            "From: sender@example.com\r\n",
+            "To: recipient@example.com\r\n",
+            "Subject: Test Email\r\n",
+            "Date: Mon, 15 Jan 2024 10:30:00 +0000\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: text/plain; charset=UTF-8\r\n",
+            "\r\n",
+            "This is the email body.\r\n"
+        );
+
+        let mut file = File::create(path)?;
+        file.write_all(email_content.as_bytes())?;
+        Ok(())
+    }
+
 }
 
-fn write_email_to_file(path: &str) -> std::io::Result<()> {
-    let email_content = concat!(
-        "From: sender@example.com\r\n",
-        "To: recipient@example.com\r\n",
-        "Subject: Test Email\r\n",
-        "Date: Mon, 15 Jan 2024 10:30:00 +0000\r\n",
-        "MIME-Version: 1.0\r\n",
-        "Content-Type: text/plain; charset=UTF-8\r\n",
-        "\r\n",
-        "This is the email body.\r\n"
-    );
 
-    let mut file = File::create(path)?;
-    file.write_all(email_content.as_bytes())?;
-    Ok(())
-}
