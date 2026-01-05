@@ -18,6 +18,7 @@ pub struct Inbox {
     inbox: Vec<IMAP_Data>,
 }
 
+// Returns a full IMAP_DATA with contents
 pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
     let domain = "imap.gmail.com";
     let tcp_stream = TcpStream::connect((domain, 993))?;
@@ -35,7 +36,7 @@ pub fn get_inbox_one(id: u32) -> Result<IMAP_Data, Box<dyn std::error::Error>> {
 
     imap_session.select("INBOX")?;
 
-    let messages = imap_session.fetch(fetch_range, "(ENVELOPE BODY[TEXT])")?;
+    let messages = imap_session.fetch(fetch_range, "(BODY[] ENVELOPE)")?;
 
     let mut ret: Option<IMAP_Data> = None; // No email yet
 
