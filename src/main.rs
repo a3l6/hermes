@@ -17,7 +17,7 @@ fn main() {
 
     let provider = EmailProvider::Google;
 
-    match cli.command {
+    /*match cli.command {
         Commands::Inbox { command } => match command {
             InboxCommands::One { id } => match get_inbox_one(provider, credentials, id) {
                 Ok(email) => println!("{:#?}", email),
@@ -57,5 +57,5 @@ fn main() {
                 eprintln!("{}", e);
             }
         }
-    }
+    } */
 }
