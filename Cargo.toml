@@ -10,4 +10,8 @@ imap = "2.4.1"
 lettre = { version = "0.11", features = ["smtp-transport", "builder"] }
 native-tls = "0.2"
 serde = "1.0.228"
-mailparse = "0.16.1"
+
+
+mail-builder = "0.3"
+mail-parser = "0.9"
+chrono = "0.4.42"

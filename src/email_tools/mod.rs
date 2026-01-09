@@ -1,7 +1,10 @@
+use chrono::DateTime;
+use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
-use mailparse::{MailHeaderMap, parse_mail};
+use mail_builder::MessageBuilder;
+use mail_parser::MessageParser;
 use native_tls::TlsConnector;
 use std::collections::HashMap;
 use std::fs::File;
@@ -17,8 +20,14 @@ pub enum EmailProvider {
 }
 
 pub struct UserCredentials {
-    pub username: String,
-    pub password: String,
+    username: String,
+    password: String,
+}
+
+impl UserCredentials {
+    pub fn new(username: String, password: String) -> UserCredentials {
+        return UserCredentials { username, password };
+    }
 }
 
 // FUTURE::
@@ -38,31 +47,29 @@ pub struct Email {
     pub body: String,
 }*/
 
-
 #[derive(Debug, Clone)]
 pub struct Email {
-    pub from: Option<String>,
+    pub from: String,
     pub to: Vec<String>,
     pub cc: Vec<String>,
     pub bcc: Vec<String>,
-    pub subject: Option<String>,
-    pub date: Option<String>,
-    pub message_id: Option<String>,
+    pub subject: String,
+    pub date: String,
+    pub message_id: String,
     pub other_headers: HashMap<String, String>,
-    pub body: EmailBody,
+    pub body: String,
 }
-
 
 impl Default for Email {
     fn default() -> Self {
         Email {
             from: "".to_string(),
-            to: "".to_string(),
-            cc: "".to_string(),
-            bcc: "".to_string(),
+            to: vec!["".to_string()],
+            cc: vec!["".to_string()],
+            bcc: vec!["".to_string()],
             subject: "".to_string(),
             date: "".to_string(),
-            message_id: 0,
+            message_id: "0".to_string(),
             other_headers: HashMap::new(),
             body: "".to_string(),
         }
@@ -105,7 +112,6 @@ pub fn get_inbox_one(
             .envelope()
             .expect("message did not have an envelope");
 
-
         if let Some(from) = envelope.from.as_ref() {
             for address in from {
                 ret = Some(Email {
@@ -121,19 +127,34 @@ pub fn get_inbox_one(
                             .map(|h| String::from_utf8_lossy(h).to_string())
                             .unwrap_or_default(),
                     ),
-                    to: credentials.username.clone(),
-                    cc: unpack_cc(envelope.cc),
+                    to: vec![credentials.username],
+                    cc: envelope
+                        .cc
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|addr| {
+                            addr.mailbox.as_ref().and_then(|mailbox| {
+                                let local = mailbox.as_ref();
+                                let host = addr.host.as_ref()?;
+                                Some(format!(
+                                    "{}@{}",
+                                    String::from_utf8_lossy(local),
+                                    String::from_utf8_lossy(host)
+                                ))
+                            })
+                        })
+                        .collect(),
                     subject: envelope
                         .subject
                         .as_ref()
                         .map(|s| String::from_utf8_lossy(s).to_string())
-                        .unwrap_or_else(|| "(no subj:wect)".to_string()),
+                        .unwrap_or_else(|| "(no subject)".to_string()),
                     date: envelope
                         .date
                         .as_ref()
                         .map(|d| String::from_utf8_lossy(d).to_string())
                         .unwrap_or_default(),
-                    message_id: message.message,
+                    message_id: message.message.to_string(),
                     body: message
                         .body()
                         .as_ref()
@@ -192,7 +213,7 @@ pub fn get_inbox_all(
             .envelope()
             .expect("message did not have an envelope");
 
-            if let Some(from) = envelope.from.as_ref() {
+        if let Some(from) = envelope.from.as_ref() {
             for address in from {
                 inbox.inbox.push(Email {
                     from: build_email(
@@ -207,8 +228,23 @@ pub fn get_inbox_all(
                             .map(|h| String::from_utf8_lossy(h).to_string())
                             .unwrap_or_default(),
                     ),
-                    to: credentials.username.clone(),
-                    cc: unpack_cc(envelope.cc),
+                    to: vec![credentials.username.clone()],
+                    cc: envelope
+                        .cc
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|addr| {
+                            addr.mailbox.as_ref().and_then(|mailbox| {
+                                let local = mailbox.as_ref();
+                                let host = addr.host.as_ref()?;
+                                Some(format!(
+                                    "{}@{}",
+                                    String::from_utf8_lossy(local),
+                                    String::from_utf8_lossy(host)
+                                ))
+                            })
+                        })
+                        .collect(),
                     subject: envelope
                         .subject
                         .as_ref()
@@ -224,7 +260,6 @@ pub fn get_inbox_all(
                 })
             }
         }
-
     }
 
     imap_session.logout()?;
@@ -237,22 +272,24 @@ fn build_email(mailbox: String, host: String) -> String {
     return format!("{mailbox}@{host}");
 }
 
-
 fn build_email_addr(addr: &imap_proto::types::Address) -> String {
-    let mailbox = addr.mailbox.as_ref()
+    let mailbox = addr
+        .mailbox
+        .as_ref()
         .map(|m| String::from_utf8_lossy(m).to_string())
         .unwrap_or_default();
 
-    let host = addr.host.as_ref()
+    let host = addr
+        .host
+        .as_ref()
         .map(|h| String::from_utf8_lossy(h).to_string())
         .unwrap_or_default();
 
-    return format!("{}@{}", mailbox, host)
+    return format!("{}@{}", mailbox, host);
 }
 
-
 fn unpack_cc(header: Option<String>) -> Vec<String> {
-    let mut cc: Vec<String> = Vec<String>::new();
+    let mut cc: Vec<String> = Vec::new();
 
     if let Some(addrs) = header.as_ref() {
         for addr in addrs {
@@ -260,19 +297,24 @@ fn unpack_cc(header: Option<String>) -> Vec<String> {
         }
     }
 
-    return cc
+    return cc;
 }
 
 pub fn send_email(
     email: Email,
     credentials: UserCredentials,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let email = Message::builder()
-        .from(email.from?)
-        .to(email.to.parse()?)
+    let mut builder = Message::builder().from(email.from.parse::<Mailbox>()?);
+
+    // Add all recipients
+    for to_addr in email.to {
+        builder = builder.to(to_addr.parse::<Mailbox>()?);
+    }
+
+    let email_msg = builder
         .subject(email.subject)
         .header(ContentType::TEXT_PLAIN)
-        .body(String::from(email.body))?;
+        .body(email.body)?;
 
     let creds: Credentials = Credentials::new(
         credentials.username.to_owned(),
@@ -291,40 +333,120 @@ pub fn send_email(
     Ok(())
 }
 
-pub struct EmailStorage {
-    path: String,
-}
+/// Converts an Email struct to RFC 5322 format and writes it to a File
+pub fn build_email_to_file(email: &Email, mut file: File) -> Result<(), String> {
+    let timestamp = DateTime::parse_from_rfc3339(&email.date)
+        .map(|dt| dt.timestamp())
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
 
-impl EmailStorage {
-    pub fn read_email(file: File) -> Result<Email, Box<dyn std::error::Error>> {
-        let mut reader = BufReader::new(file);
-        let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
+    let mut builder = MessageBuilder::new()
+        .from(email.from.as_str())
+        .subject(&email.subject)
+        .message_id(email.message_id)
+        .date(timestamp)
+        .text_body(&email.body);
 
-        let parsed = parse_mail(&buffer)?;
-
-        println!("Subject: {:?}", parsed.headers.get_first_value("Subject"));
-        println!("Body: {}", parsed.get_body()?);
-
-        Ok(())
-    }
-    fn write_email_to_file(path: &str) -> std::io::Result<()> {
-        let email_content = concat!(
-            "From: sender@example.com\r\n",
-            "To: recipient@example.com\r\n",
-            "Subject: Test Email\r\n",
-            "Date: Mon, 15 Jan 2024 10:30:00 +0000\r\n",
-            "MIME-Version: 1.0\r\n",
-            "Content-Type: text/plain; charset=UTF-8\r\n",
-            "\r\n",
-            "This is the email body.\r\n"
-        );
-
-        let mut file = File::create(path)?;
-        file.write_all(email_content.as_bytes())?;
-        Ok(())
+    for to_addr in &email.to {
+        builder = builder.to(to_addr.as_str());
     }
 
+    for cc_addr in &email.cc {
+        builder = builder.cc(cc_addr.as_str());
+    }
+
+    for bcc_addr in &email.bcc {
+        builder = builder.bcc(bcc_addr.as_str());
+    }
+
+    for (key, value) in &email.other_headers {
+        builder = builder.header(key.as_str(), value.as_str());
+    }
+
+    let email_bytes = builder.write_to_vec().map_err(|e| e.to_string())?;
+    file.write_all(&email_bytes).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
+pub fn parse_email_from_file(mut file: File) -> Result<Email, String> {
+    let mut raw_email = Vec::new();
+    file.read_to_end(&mut raw_email)
+        .map_err(|e| e.to_string())?;
 
+    let parser = MessageParser::default();
+    let message = parser.parse(&raw_email).ok_or("Failed to parse email")?;
+
+    let from = message
+        .from()
+        .and_then(|addrs| addrs.first())
+        .and_then(|addr| addr.address())
+        .unwrap_or("")
+        .to_string();
+
+    let to = message
+        .to()
+        .map(|addrs| {
+            addrs
+                .iter()
+                .filter_map(|addr| addr.address())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let cc = message
+        .cc()
+        .map(|addrs| {
+            addrs
+                .iter()
+                .filter_map(|addr| addr.address())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let bcc = message
+        .bcc()
+        .map(|addrs| {
+            addrs
+                .iter()
+                .filter_map(|addr| addr.address())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let subject = message.subject().unwrap_or("").to_string();
+
+    let date = message.date().map(|d| d.to_rfc3339()).unwrap_or_default();
+
+    let message_id = message.message_id().unwrap_or("").to_string();
+
+    let mut other_headers = HashMap::new();
+    for header in message.headers() {
+        let name = header.name().to_string();
+        let value = header.value().to_string();
+
+        // Skip standard headers we already extracted
+        if !matches!(
+            name.to_lowercase().as_str(),
+            "from" | "to" | "cc" | "bcc" | "subject" | "date" | "message-id"
+        ) {
+            other_headers.insert(name, value);
+        }
+    }
+
+    let body = message.body_text(0).unwrap_or("").to_string();
+
+    Ok(Email {
+        from,
+        to,
+        cc,
+        bcc,
+        subject,
+        date,
+        message_id,
+        other_headers,
+        body,
+    })
+}
