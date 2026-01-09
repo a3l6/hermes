@@ -11,8 +11,9 @@ fn main() {
 
     // TEMP: credentials (you should load these from env vars later)
     let credentials = UserCredentials::new(
-        std::env::var("EMAIL_USERNAME").expect("EMAIL_USERNAME not set"), 
-        std::env::var("EMAIL_PASSWORD").expect("EMAIL_PASSWORD not set"))
+        std::env::var("EMAIL_USERNAME").expect("EMAIL_USERNAME not set"),
+        std::env::var("EMAIL_PASSWORD").expect("EMAIL_PASSWORD not set"),
+    );
 
     let provider = EmailProvider::Google;
 
