@@ -13,12 +13,14 @@ use std::net::TcpStream;
 
 pub mod cli;
 
+#[allow(dead_code)]
 pub enum EmailProvider {
     Google,
     Outlook,
     Custom(String),
 }
 
+#[derive(Clone)]
 pub struct UserCredentials {
     username: String,
     password: String,
@@ -78,12 +80,12 @@ impl Default for Email {
 
 #[derive(Debug)]
 pub struct Inbox {
-    inbox: Vec<Email>,
+    pub inbox: Vec<Email>,
 }
 
 // Fixed get_inbox_one function
 pub fn get_inbox_one(
-    provider: EmailProvider,
+    _provider: EmailProvider,
     credentials: UserCredentials,
     id: u32,
 ) -> Result<Email, Box<dyn std::error::Error>> {
@@ -227,7 +229,7 @@ pub fn get_inbox_one(
 
 // Fixed get_inbox_all function
 pub fn get_inbox_all(
-    provider: EmailProvider,
+    _provider: EmailProvider,
     credentials: UserCredentials,
 ) -> Result<Inbox, Box<dyn std::error::Error>> {
     let mut inbox = Inbox { inbox: Vec::new() };

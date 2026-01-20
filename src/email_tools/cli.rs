@@ -1,3 +1,4 @@
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -17,16 +18,16 @@ pub enum Commands {
     Send {
         #[arg(long)]
         from: String,
-
         #[arg(long)]
         to: Vec<String>,
-
         #[arg(long)]
         subject: String,
-
         #[arg(long)]
         body: String,
     },
+
+    /// Launch the TUI (Neomutt-style interface)
+    Ui,
 }
 
 #[derive(Subcommand, Debug)]
@@ -34,3 +35,4 @@ pub enum InboxCommands {
     One { id: u32 },
     All,
 }
+
