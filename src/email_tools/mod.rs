@@ -1,34 +1,18 @@
+use crate::config::Config;
 use chrono::DateTime;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{Message, SmtpTransport, Transport};
 use mail_builder::MessageBuilder;
-use mail_parser::MessageParser;
-use native_tls::TlsConnector;
+use mail_parser::{Address, MessageParser, MimeHeaders};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 
 pub mod cli;
-
-pub enum EmailProvider {
-    Google,
-    Outlook,
-    Custom(String),
-}
-
-pub struct UserCredentials {
-    username: String,
-    password: String,
-}
-
-impl UserCredentials {
-    pub fn new(username: String, password: String) -> UserCredentials {
-        return UserCredentials { username, password };
-    }
-}
+pub mod remote;
 
 // FUTURE::
 //  let config = Config {
@@ -76,351 +60,163 @@ impl Default for Email {
     }
 }
 
-#[derive(Debug)]
-pub struct Inbox {
-    inbox: Vec<Email>,
-}
+pub fn send_email(email: &Email, config: &Config) -> crate::Result<()> {
+    let mut builder = Message::builder().from(mailbox(&email.from)?);
 
-// Fixed get_inbox_one function
-pub fn get_inbox_one(
-    provider: EmailProvider,
-    credentials: UserCredentials,
-    id: u32,
-) -> Result<Email, Box<dyn std::error::Error>> {
-    let domain = "imap.gmail.com";
-    let tcp_stream = TcpStream::connect((domain, 993))?;
-
-    let tls = TlsConnector::builder().build()?;
-    let tls_stream = tls.connect(domain, tcp_stream)?;
-
-    let client = imap::Client::new(tls_stream);
-
-    let mut imap_session = client
-        .login(credentials.username.clone(), credentials.password)
-        .map_err(|e| e.0)?;
-
-    let fetch_range = id.to_string();
-
-    imap_session.select("INBOX")?;
-
-    let messages = imap_session.fetch(fetch_range, "(BODY[] ENVELOPE)")?;
-
-    let mut ret: Option<Email> = None;
-
-    for message in messages.iter() {
-        let envelope = message
-            .envelope()
-            .expect("message did not have an envelope");
-
-        let from = envelope
-            .from
-            .as_ref()
-            .and_then(|addrs| addrs.first())
-            .map(|addr| {
-                build_email(
-                    addr.mailbox
-                        .as_ref()
-                        .map(|m| String::from_utf8_lossy(m).to_string())
-                        .unwrap_or_default(),
-                    addr.host
-                        .as_ref()
-                        .map(|h| String::from_utf8_lossy(h).to_string())
-                        .unwrap_or_default(),
-                )
-            })
-            .unwrap_or_default();
-
-        let to = envelope
-            .to
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![credentials.username.clone()]);
-
-        let cc = envelope
-            .cc
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let bcc = envelope
-            .bcc
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        ret = Some(Email {
-            from,
-            to,
-            cc,
-            bcc,
-            subject: envelope
-                .subject
-                .as_ref()
-                .map(|s| String::from_utf8_lossy(s).to_string())
-                .unwrap_or_else(|| "(no subject)".to_string()),
-            date: envelope
-                .date
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d).to_string())
-                .unwrap_or_default(),
-            message_id: envelope
-                .message_id
-                .as_ref()
-                .map(|id| String::from_utf8_lossy(id).to_string())
-                .unwrap_or_else(|| message.message.to_string()),
-            other_headers: HashMap::new(),
-            body: message
-                .body()
-                .map(|b| String::from_utf8_lossy(b).to_string())
-                .unwrap_or_default(),
-        });
+    for to_addr in email.to.iter().filter(|a| !a.trim().is_empty()) {
+        builder = builder.to(mailbox(to_addr)?);
     }
 
-    imap_session.logout()?;
-
-    if ret.is_none() {
-        return Err("Could not find requested email".into());
+    for cc_addr in email.cc.iter().filter(|a| !a.trim().is_empty()) {
+        builder = builder.cc(mailbox(cc_addr)?);
     }
 
-    println!("\nDisconnected successfully");
-    Ok(ret.unwrap())
-}
-
-// Fixed get_inbox_all function
-pub fn get_inbox_all(
-    provider: EmailProvider,
-    credentials: UserCredentials,
-) -> Result<Inbox, Box<dyn std::error::Error>> {
-    let mut inbox = Inbox { inbox: Vec::new() };
-
-    let domain = "imap.gmail.com";
-    let tcp_stream = TcpStream::connect((domain, 993))?;
-
-    let tls = TlsConnector::builder().build()?;
-    let tls_stream = tls.connect(domain, tcp_stream)?;
-
-    let client = imap::Client::new(tls_stream);
-
-    let mut imap_session = client
-        .login(credentials.username.clone(), credentials.password)
-        .map_err(|e| e.0)?;
-
-    let mailbox = imap_session.select("INBOX")?;
-
-    let total_messages = mailbox.exists;
-    println!("Total messages in inbox: {}", total_messages);
-
-    let fetch_range = if total_messages > 0 {
-        format!("1:{}", total_messages)
-    } else {
-        println!("No messages in inbox");
-        return Ok(inbox);
-    };
-
-    let messages = imap_session.fetch(fetch_range, "ENVELOPE")?;
-
-    println!("Fetched {} messages", messages.len());
-
-    for message in messages.iter() {
-        let envelope = message
-            .envelope()
-            .expect("message did not have an envelope");
-
-        let from = envelope
-            .from
-            .as_ref()
-            .and_then(|addrs| addrs.first())
-            .map(|addr| {
-                build_email(
-                    addr.mailbox
-                        .as_ref()
-                        .map(|m| String::from_utf8_lossy(m).to_string())
-                        .unwrap_or_default(),
-                    addr.host
-                        .as_ref()
-                        .map(|h| String::from_utf8_lossy(h).to_string())
-                        .unwrap_or_default(),
-                )
-            })
-            .unwrap_or_default();
-
-        let to = envelope
-            .to
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![credentials.username.clone()]);
-
-        let cc = envelope
-            .cc
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let bcc = envelope
-            .bcc
-            .as_ref()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .filter_map(|addr| {
-                        let mailbox = addr.mailbox.as_ref()?;
-                        let host = addr.host.as_ref()?;
-                        Some(format!(
-                            "{}@{}",
-                            String::from_utf8_lossy(mailbox),
-                            String::from_utf8_lossy(host)
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        inbox.inbox.push(Email {
-            from,
-            to,
-            cc,
-            bcc,
-            subject: envelope
-                .subject
-                .as_ref()
-                .map(|s| String::from_utf8_lossy(s).to_string())
-                .unwrap_or_else(|| "(no subject)".to_string()),
-            date: envelope
-                .date
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d).to_string())
-                .unwrap_or_default(),
-            message_id: envelope
-                .message_id
-                .as_ref()
-                .map(|id| String::from_utf8_lossy(id).to_string())
-                .unwrap_or_else(|| message.message.to_string()),
-            other_headers: HashMap::new(),
-            body: String::new(), // ENVELOPE doesn't include body
-        });
+    for bcc_addr in email.bcc.iter().filter(|a| !a.trim().is_empty()) {
+        builder = builder.bcc(mailbox(bcc_addr)?);
     }
 
-    imap_session.logout()?;
-
-    println!("\nDisconnected successfully");
-    Ok(inbox)
-}
-
-// Helper function (assumed to exist in your code)
-fn build_email(mailbox: String, host: String) -> String {
-    if mailbox.is_empty() || host.is_empty() {
-        return String::new();
-    }
-    format!("{}@{}", mailbox, host)
-}
-
-pub fn send_email(
-    email: Email,
-    credentials: UserCredentials,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = Message::builder().from(email.from.parse::<Mailbox>()?);
-
-    // Add all recipients
-    for to_addr in email.to {
-        builder = builder.to(to_addr.parse::<Mailbox>()?);
-    }
-
-    // Add CC recipients
-    for cc_addr in email.cc {
-        builder = builder.cc(cc_addr.parse::<Mailbox>()?);
-    }
-
-    // Add BCC recipients
-    for bcc_addr in email.bcc {
-        builder = builder.bcc(bcc_addr.parse::<Mailbox>()?);
+    if let Some(id) = email.other_headers.get("In-Reply-To") {
+        builder = builder.in_reply_to(id.clone()).references(id.clone());
     }
 
     let email_msg = builder
-        .subject(email.subject)
+        .subject(email.subject.as_str())
         .header(ContentType::TEXT_PLAIN)
-        .body(email.body)?;
+        .body(email.body.clone())?;
 
-    let creds: Credentials = Credentials::new(
-        credentials.username.to_owned(),
-        credentials.password.to_owned(),
-    );
+    let tls = TlsParameters::builder(config.smtp_host.clone())
+        .dangerous_accept_invalid_certs(config.insecure_tls)
+        .build()?;
+    // 587 is the STARTTLS submission port; anything else is implicit TLS.
+    let tls = if config.smtp_port == 587 {
+        Tls::Required(tls)
+    } else {
+        Tls::Wrapper(tls)
+    };
 
-    let mailer = SmtpTransport::relay("smtp.gmail.com")?
-        .credentials(creds)
+    let mailer = SmtpTransport::builder_dangerous(config.smtp_host.as_str())
+        .port(config.smtp_port)
+        .tls(tls)
+        .credentials(Credentials::new(
+            config.username.clone(),
+            config.password.clone(),
+        ))
         .build();
 
-    match mailer.send(&email_msg) {
-        // Changed from &email to &email_msg
-        Ok(_) => println!("Email sent successfully!"),
-        Err(e) => eprintln!("Could not send email: {}", e),
-    }
-
+    mailer.send(&email_msg)?;
     Ok(())
+}
+
+fn mailbox(address: &str) -> crate::Result<Mailbox> {
+    address
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid address \"{}\": {}", address.trim(), e).into())
+}
+
+/// Renders an address header as "Name <addr>, addr".
+pub fn format_addresses(addrs: Option<&Address>) -> String {
+    let Some(addrs) = addrs else {
+        return String::new();
+    };
+    addrs
+        .iter()
+        .filter_map(|addr| {
+            let address = addr.address()?;
+            Some(match addr.name() {
+                Some(name) => format!("{} <{}>", name, address),
+                None => address.to_string(),
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Local-time rendering of a Unix timestamp.
+pub fn format_date(timestamp: i64) -> String {
+    DateTime::from_timestamp(timestamp, 0)
+        .map(|d| {
+            d.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Readable text and attachment names of a raw RFC 5322 message.
+pub fn body_and_attachments(raw: &[u8]) -> (String, Vec<String>) {
+    let Some(message) = MessageParser::default().parse(raw) else {
+        return (String::from_utf8_lossy(raw).to_string(), Vec::new());
+    };
+    let body = message
+        .body_text(0)
+        .map(|cow| cow.to_string())
+        .unwrap_or_default();
+    let attachments = message
+        .attachments()
+        .map(|part| part.attachment_name().unwrap_or("(unnamed)").to_string())
+        .collect();
+    (body, attachments)
+}
+
+/// For a draft that replies to another message: that message's
+/// Message-ID, and the first line the draft's author wrote.
+pub fn reply_draft(raw: &[u8]) -> Option<(String, String)> {
+    let message = MessageParser::default().parse(raw)?;
+    let replied = message.in_reply_to().as_text()?.to_string();
+    let body = message.body_text(0).unwrap_or_default();
+    let mut written = body.lines().map(str::trim);
+    let preview = written
+        .find(|line| !line.is_empty() && !line.starts_with('>'))
+        .unwrap_or("(empty)");
+    Some((replied, preview.to_string()))
+}
+
+/// Where a reply to a raw message should go: Reply-To, else From.
+pub fn reply_address(raw: &[u8]) -> String {
+    MessageParser::default()
+        .parse(raw)
+        .map(|message| format_addresses(message.reply_to().or(message.from())))
+        .unwrap_or_default()
+}
+
+/// The text handed to $EDITOR when composing.
+pub fn draft_template(to: &str, subject: &str, body: &str) -> String {
+    format!("To: {}\nCc: \nBcc: \nSubject: {}\n\n{}", to, subject, body)
+}
+
+/// Parses an edited draft_template back into an Email: header lines up to
+/// the first blank line, then the body.
+pub fn parse_draft(text: &str, from: &str) -> Email {
+    let (headers, body) = text.split_once("\n\n").unwrap_or((text, ""));
+    let mut email = Email {
+        from: from.to_string(),
+        to: Vec::new(),
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        body: body.to_string(),
+        ..Default::default()
+    };
+    for line in headers.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let addresses = || {
+            value
+                .split(',')
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect()
+        };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "to" => email.to = addresses(),
+            "cc" => email.cc = addresses(),
+            "bcc" => email.bcc = addresses(),
+            "subject" => email.subject = value.trim().to_string(),
+            _ => {}
+        }
+    }
+    email
 }
 
 /// Converts an Email struct to RFC 5322 format and writes it to a File
@@ -737,29 +533,43 @@ mod tests {
     }
 
     #[test]
-    fn test_user_credentials_creation() {
-        let creds = UserCredentials::new("user@example.com".to_string(), "password123".to_string());
+    fn test_reply_draft() {
+        let raw = b"To: ann@test.com\r\nIn-Reply-To: <abc@test.com>\r\nSubject: Re: Hi\r\n\r\n\
+            \r\nSounds good to me.\r\n\r\n> Hi\r\n";
+        let (replied, preview) = reply_draft(raw).unwrap();
+        assert_eq!(replied, "abc@test.com");
+        assert_eq!(preview, "Sounds good to me.");
 
-        assert_eq!(creds.username, "user@example.com");
-        assert_eq!(creds.password, "password123");
+        assert!(reply_draft(b"To: ann@test.com\r\nSubject: New\r\n\r\nHello\r\n").is_none());
     }
 
     #[test]
-    fn test_inbox_default() {
-        let inbox = Inbox { inbox: Vec::new() };
-        assert_eq!(inbox.inbox.len(), 0);
+    fn test_parse_draft() {
+        let text = draft_template("a@test.com", "Hi", "")
+            .replace("Cc: ", "Cc: b@test.com, c@test.com")
+            + "line one\n\nline two\n";
+        let email = parse_draft(&text, "me@test.com");
+
+        assert_eq!(email.from, "me@test.com");
+        assert_eq!(email.to, ["a@test.com"]);
+        assert_eq!(email.cc, ["b@test.com", "c@test.com"]);
+        assert!(email.bcc.is_empty());
+        assert_eq!(email.subject, "Hi");
+        assert_eq!(email.body, "line one\n\nline two\n");
     }
 
     #[test]
-    fn test_build_email_helper() {
-        let email = build_email("testuser".to_string(), "example.com".to_string());
-        assert_eq!(email, "testuser@example.com");
+    fn test_reply_address_and_body() {
+        let raw = b"From: Ann Lee <ann@test.com>\r\nReply-To: list@test.com\r\n\
+            Subject: =?UTF-8?Q?caf=C3=A9?=\r\n\r\nHello there\r\n";
 
-        let empty = build_email("".to_string(), "example.com".to_string());
-        assert_eq!(empty, "");
-
-        let empty2 = build_email("testuser".to_string(), "".to_string());
-        assert_eq!(empty2, "");
+        assert_eq!(reply_address(raw), "list@test.com");
+        let message = MessageParser::default().parse(&raw[..]).unwrap();
+        assert_eq!(format_addresses(message.from()), "Ann Lee <ann@test.com>");
+        assert_eq!(message.subject(), Some("caf\u{e9}"));
+        let (body, attachments) = body_and_attachments(raw);
+        assert_eq!(body.trim(), "Hello there");
+        assert!(attachments.is_empty());
     }
 
     #[test]

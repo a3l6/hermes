@@ -9,9 +9,16 @@ imap = "2.4.1"
 
 lettre = { version = "0.11", features = ["smtp-transport", "builder"] }
 native-tls = "0.2"
-serde = "1.0.228"
+serde = { version = "1.0.228", features = ["derive"] }
 
 
 mail-builder = "0.3"
 mail-parser = "0.9"
 chrono = "0.4.42"
+ratatui = "0.29"
+rusqlite = { version = "0.37", features = ["bundled-sqlcipher"] }
+argon2 = "0.6.0"
+rpassword = "7.5.4"
+dirs = "7.0.0"
+toml = "1.1.6"
+rand = "0.10.3"
