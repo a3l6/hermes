@@ -129,78 +129,88 @@ impl Remote {
         })
     }
 
+    // The operations below take any number of messages and send them to
+    // the server as one command.
+
     pub fn set_flag(
         &mut self,
         store: &Store,
         folder: &str,
-        uid: u32,
+        uids: &[u32],
         flag: Flag,
         on: bool,
     ) -> Result<()> {
         self.session.select(folder)?;
         let sign = if on { '+' } else { '-' };
         self.session
-            .uid_store(uid.to_string(), format!("{sign}FLAGS ({})", flag.imap()))?;
-        store.set_flag(folder, uid, flag, on)
+            .uid_store(sorted_set(uids), format!("{sign}FLAGS ({})", flag.imap()))?;
+        store.batch(|| {
+            for uid in uids {
+                store.set_flag(folder, *uid, flag, on)?;
+            }
+            Ok(())
+        })
     }
 
-    pub fn move_to(&mut self, store: &Store, folder: &str, uid: u32, dest: &str) -> Result<()> {
+    pub fn move_to(&mut self, store: &Store, folder: &str, uids: &[u32], dest: &str) -> Result<()> {
         self.session.select(folder)?;
         if self.has_move {
-            self.session.uid_mv(uid.to_string(), dest)?;
+            self.session.uid_mv(sorted_set(uids), dest)?;
         } else {
-            self.session.uid_copy(uid.to_string(), dest)?;
-            self.expunge(uid)?;
+            self.session.uid_copy(sorted_set(uids), dest)?;
+            self.expunge(uids)?;
         }
-        store.delete_message(folder, uid)
+        forget(store, folder, uids)
     }
 
-    pub fn copy_to(&mut self, folder: &str, uid: u32, dest: &str) -> Result<()> {
+    pub fn copy_to(&mut self, folder: &str, uids: &[u32], dest: &str) -> Result<()> {
         self.session.select(folder)?;
-        self.session.uid_copy(uid.to_string(), dest)?;
+        self.session.uid_copy(sorted_set(uids), dest)?;
         Ok(())
     }
 
-    /// Undoes a move: finds the message with `message_id` in `folder` and
-    /// moves it to `dest`.
+    /// Undoes a move: finds the messages with `message_ids` in `folder`
+    /// and moves them to `dest`.
     pub fn move_back(
         &mut self,
         store: &Store,
         folder: &str,
-        message_id: &str,
+        message_ids: &[String],
         dest: &str,
     ) -> Result<()> {
         self.session.select(folder)?;
-        let query = format!("HEADER Message-ID {}", quote(&format!("<{message_id}>")));
-        let found = self.session.uid_search(query)?;
-        let uid = found
-            .into_iter()
-            .max()
-            .ok_or(format!("cannot undo: the message is no longer in {folder}"))?;
-        self.move_to(store, folder, uid, dest)
+        let mut uids = Vec::new();
+        for message_id in message_ids {
+            let query = format!("HEADER Message-ID {}", quote(&format!("<{message_id}>")));
+            uids.extend(self.session.uid_search(query)?.into_iter().max());
+        }
+        if uids.is_empty() {
+            return Err(format!("cannot undo: the mail is no longer in {folder}").into());
+        }
+        self.move_to(store, folder, &uids, dest)
     }
 
-    /// Moves the message to the trash folder; deletes it for good when it
-    /// is already there or the server has no trash folder.
-    pub fn delete(&mut self, store: &Store, folder: &str, uid: u32) -> Result<()> {
+    /// Moves the messages to the trash folder; deletes them for good when
+    /// they are already there or the server has no trash folder.
+    pub fn delete(&mut self, store: &Store, folder: &str, uids: &[u32]) -> Result<()> {
         match store.folder_with_role("trash")? {
-            Some(trash) if trash != folder => self.move_to(store, folder, uid, &trash),
+            Some(trash) if trash != folder => self.move_to(store, folder, uids, &trash),
             _ => {
                 self.session.select(folder)?;
-                self.expunge(uid)?;
-                store.delete_message(folder, uid)
+                self.expunge(uids)?;
+                forget(store, folder, uids)
             }
         }
     }
 
-    pub fn archive(&mut self, store: &Store, folder: &str, uid: u32) -> Result<()> {
+    pub fn archive(&mut self, store: &Store, folder: &str, uids: &[u32]) -> Result<()> {
         let archive = match store.folder_with_role("archive")? {
             Some(archive) => archive,
             None => store
                 .folder_with_role("all")?
                 .ok_or("this account has no archive folder")?,
         };
-        self.move_to(store, folder, uid, &archive)
+        self.move_to(store, folder, uids, &archive)
     }
 
     /// Server-side full-text search; returns matching UIDs.
@@ -228,12 +238,29 @@ impl Remote {
         self.list_folders(store)
     }
 
-    fn expunge(&mut self, uid: u32) -> Result<()> {
+    fn expunge(&mut self, uids: &[u32]) -> Result<()> {
         self.session
-            .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
+            .uid_store(sorted_set(uids), "+FLAGS (\\Deleted)")?;
         self.session.expunge()?;
         Ok(())
     }
+}
+
+/// Drops messages that left `folder` from the store.
+fn forget(store: &Store, folder: &str, uids: &[u32]) -> Result<()> {
+    store.batch(|| {
+        for uid in uids {
+            store.delete_message(folder, *uid)?;
+        }
+        Ok(())
+    })
+}
+
+/// `uid_set` for UIDs in any order.
+fn sorted_set(uids: &[u32]) -> String {
+    let mut uids = uids.to_vec();
+    uids.sort_unstable();
+    uid_set(&uids)
 }
 
 /// An IMAP quoted string.

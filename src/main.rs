@@ -138,11 +138,11 @@ fn execute(command: Commands, config: &Config, store: &Store) -> Result<()> {
         }
 
         Commands::Mv { uid, dest, folder } => {
-            Remote::connect(config)?.move_to(store, &folder, uid, &dest)?;
+            Remote::connect(config)?.move_to(store, &folder, &[uid], &dest)?;
         }
 
         Commands::Rm { uid, folder } => {
-            Remote::connect(config)?.delete(store, &folder, uid)?;
+            Remote::connect(config)?.delete(store, &folder, &[uid])?;
         }
 
         Commands::Send {

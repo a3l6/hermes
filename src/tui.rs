@@ -25,15 +25,16 @@ pub enum Cmd {
     /// Sync one folder now and give it priority in background downloads.
     Open(String),
     FetchBody(String, u32),
-    SetFlag(String, u32, Flag, bool),
-    Delete(String, u32),
-    Archive(String, u32),
-    Move(String, u32, String),
+    // These act on any number of messages (folder, uids) in one request.
+    SetFlag(String, Vec<u32>, Flag, bool),
+    Delete(String, Vec<u32>),
+    Archive(String, Vec<u32>),
+    Move(String, Vec<u32>, String),
     /// Copy a message (folder, uid) into another folder.
-    Copy(String, u32, String),
+    Copy(String, Vec<u32>, String),
     /// Undo a move: find the message by Message-ID in the first folder
     /// and move it to the second.
-    MoveBack(String, String, String),
+    MoveBack(String, Vec<String>, String),
     Search(String, String),
     CreateFolder(String),
     DeleteFolder(String),
@@ -220,18 +221,18 @@ impl Worker {
                 }
             }
             Cmd::FetchBody(folder, uid) => remote.fetch_bodies(store, folder, &[*uid])?,
-            Cmd::SetFlag(folder, uid, flag, on) => {
-                remote.set_flag(store, folder, *uid, *flag, *on)?
+            Cmd::SetFlag(folder, uids, flag, on) => {
+                remote.set_flag(store, folder, uids, *flag, *on)?
             }
-            Cmd::Delete(folder, uid) => remote.delete(store, folder, *uid)?,
-            Cmd::Archive(folder, uid) => remote.archive(store, folder, *uid)?,
-            Cmd::Move(folder, uid, dest) => remote.move_to(store, folder, *uid, dest)?,
-            Cmd::Copy(folder, uid, dest) => {
-                remote.copy_to(folder, *uid, dest)?;
+            Cmd::Delete(folder, uids) => remote.delete(store, folder, uids)?,
+            Cmd::Archive(folder, uids) => remote.archive(store, folder, uids)?,
+            Cmd::Move(folder, uids, dest) => remote.move_to(store, folder, uids, dest)?,
+            Cmd::Copy(folder, uids, dest) => {
+                remote.copy_to(folder, uids, dest)?;
                 self.to_sync.push_front(dest.clone());
             }
-            Cmd::MoveBack(folder, message_id, dest) => {
-                remote.move_back(store, folder, message_id, dest)?;
+            Cmd::MoveBack(folder, message_ids, dest) => {
+                remote.move_back(store, folder, message_ids, dest)?;
                 self.to_sync.push_front(folder.clone());
                 self.to_sync.push_front(dest.clone());
             }
@@ -244,7 +245,7 @@ impl Worker {
             Cmd::Send(_, replied) => {
                 if let Some((folder, uid)) = replied {
                     // The mail is out; failing to mark the original is minor.
-                    let _ = remote.set_flag(store, folder, *uid, Flag::Answered, true);
+                    let _ = remote.set_flag(store, folder, &[*uid], Flag::Answered, true);
                 }
                 return Ok(Some(Update::Status("Message sent".to_string())));
             }
@@ -625,7 +626,12 @@ impl App {
             self.send(Cmd::FetchBody(self.folder.clone(), uid));
         }
         if !seen {
-            self.send(Cmd::SetFlag(self.folder.clone(), uid, Flag::Seen, true));
+            self.send(Cmd::SetFlag(
+                self.folder.clone(),
+                vec![uid],
+                Flag::Seen,
+                true,
+            ));
         }
         Ok(())
     }
@@ -930,9 +936,7 @@ impl App {
         let uids = std::mem::take(&mut self.moving);
         let moved = self.messages.iter().filter(|m| uids.contains(&m.uid));
         self.remember_move(&moved.cloned().collect::<Vec<_>>(), &name);
-        for uid in uids {
-            self.send(Cmd::Move(self.folder.clone(), uid, name.clone()));
-        }
+        self.send(Cmd::Move(self.folder.clone(), uids, name));
         self.view = None;
         self.focus = Focus::List;
         Ok(())
@@ -975,30 +979,31 @@ impl App {
         }
         // A message is found again in `dest` by its Message-ID.
         let with_id = messages.iter().filter(|m| !m.message_id.is_empty());
-        let back: Vec<Cmd> = with_id
-            .map(|m| Cmd::MoveBack(dest.to_string(), m.message_id.clone(), self.folder.clone()))
-            .collect();
-        if !back.is_empty() {
-            self.undo.push(back);
+        let ids: Vec<String> = with_id.map(|m| m.message_id.clone()).collect();
+        if !ids.is_empty() {
+            let back = Cmd::MoveBack(dest.to_string(), ids, self.folder.clone());
+            self.undo.push(vec![back]);
         }
     }
 
-    /// Sends one command per target message, which moves it to `dest`
-    /// (if known, so that it can be undone), and leaves visual mode.
+    /// Sends one command for all the target messages, which moves them to
+    /// `dest` (if known, so that it can be undone), and leaves visual mode.
     fn move_targets(
         &mut self,
         count: usize,
         dest: Option<String>,
-        command: impl Fn(String, u32) -> Cmd,
+        command: impl FnOnce(String, Vec<u32>) -> Cmd,
     ) {
         let targets = self.targets(count);
+        self.mode = Mode::Normal;
+        if targets.is_empty() {
+            return;
+        }
         if let Some(dest) = dest {
             self.remember_move(&targets, &dest);
         }
-        for message in targets {
-            self.send(command(self.folder.clone(), message.uid));
-        }
-        self.mode = Mode::Normal;
+        let uids = targets.iter().map(|m| m.uid).collect();
+        self.send(command(self.folder.clone(), uids));
         self.view = None;
     }
 
@@ -1030,12 +1035,19 @@ impl App {
         };
         let on = on.unwrap_or(!current(first));
         let folder = self.folder.clone();
-        let back = targets.iter();
-        let back = back.map(|m| Cmd::SetFlag(folder.clone(), m.uid, flag, current(m)));
-        self.undo.push(back.collect());
-        for message in &targets {
-            self.send(Cmd::SetFlag(folder.clone(), message.uid, flag, on));
+        let uids = |messages: &mut dyn Iterator<Item = &Message>| messages.map(|m| m.uid).collect();
+        // Undo restores each message's own previous value.
+        let (was_on, was_off): (Vec<&Message>, Vec<&Message>) =
+            targets.iter().partition(|m| current(m));
+        let mut back = Vec::new();
+        for (messages, value) in [(was_on, true), (was_off, false)] {
+            if !messages.is_empty() {
+                let uids = uids(&mut messages.into_iter());
+                back.push(Cmd::SetFlag(folder.clone(), uids, flag, value));
+            }
         }
+        self.undo.push(back);
+        self.send(Cmd::SetFlag(folder, uids(&mut targets.iter()), flag, on));
         self.mode = Mode::Normal;
     }
 
@@ -1045,7 +1057,7 @@ impl App {
             self.set_status("Already at oldest change".to_string(), false);
             return;
         };
-        self.set_status(format!("{} changes undone", commands.len()), false);
+        self.set_status("1 change undone".to_string(), false);
         for command in commands {
             self.send(command);
         }
@@ -1072,9 +1084,7 @@ impl App {
             return;
         }
         self.set_status(format!("{} messages copied here", uids.len()), false);
-        for uid in uids {
-            self.send(Cmd::Copy(from.clone(), uid, self.folder.clone()));
-        }
+        self.send(Cmd::Copy(from, uids, self.folder.clone()));
     }
 
     /// `m`: remember the targets and let the folders pane pick where to.
@@ -1181,9 +1191,7 @@ impl App {
             "archive" => self.archive(1),
             "m" | "move" | "mv" => {
                 let dest = arg.clone();
-                self.move_targets(1, Some(arg), |folder, uid| {
-                    Cmd::Move(folder, uid, dest.clone())
-                });
+                self.move_targets(1, Some(arg), |folder, uids| Cmd::Move(folder, uids, dest));
             }
             "read" => self.flag(1, Flag::Seen, Some(true)),
             "unread" => self.flag(1, Flag::Seen, Some(false)),
