@@ -4,7 +4,7 @@ A modal, vim-style email client for the terminal, written in Rust.
 
 ![The inbox, with a reply draft listed under the message it answers](docs/screenshots/inbox.png)
 
-Hermes talks IMAP and SMTP, keeps a full encrypted copy of your mailbox
+Hermes uses IMAP and SMTP, keeps a full encrypted copy of your mailbox
 on disk so it works offline, and is driven the way neovim is: normal,
 visual and command modes, counts, ranges, a leader key and undo.
 
